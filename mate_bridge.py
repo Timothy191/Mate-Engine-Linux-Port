@@ -171,7 +171,21 @@ def is_action_or_deep_task(user_msg):
 # ─────────────────────────────────────────────────────────────
 # 4. Antigravity Deep Agentic Streaming Engine
 # ─────────────────────────────────────────────────────────────
-def stream_agy_response(prompt, request_data, prefix_note=None, emotion_tag="[emotion:thinking]"):
+# Patterns of internal debug/MCP chatter to suppress from user view
+MCP_DEBUG_PATTERNS = (
+    "[mcp", "mcp:", "mcp server", "connected to mcp", "loading mcp",
+    "call_mcp_tool", "tool_call", "tool_result", "[gin]", "running command",
+    "executing tool", "thinking process:", "debug:"
+)
+
+def is_internal_debug_line(line):
+    """Returns True if the line is internal tool/MCP telemetry that should be hidden."""
+    cleaned = line.strip().lower()
+    if not cleaned:
+        return False
+    return any(cleaned.startswith(pat) or pat in cleaned for pat in MCP_DEBUG_PATTERNS)
+
+def stream_agy_response(prompt, request_data):
     model = request_data.get("model", "qwen2.5:0.5b")
     full_response = []
 
@@ -181,17 +195,6 @@ def stream_agy_response(prompt, request_data, prefix_note=None, emotion_tag="[em
             "message": {"role": "assistant", "content": content},
             "done": done,
         }) + "\n"
-
-    # Deliver any pending proactive notifications first!
-    pending_alerts = fetch_and_mark_undelivered_notifications()
-    if pending_alerts:
-        yield chunk("[emotion:alert] " + "\n".join(pending_alerts) + "\n\n")
-
-    if emotion_tag:
-        yield chunk(f"{emotion_tag} ")
-
-    if prefix_note:
-        yield chunk(f"{prefix_note}\n\n")
 
     # Assemble contextual prompt curing amnesia
     context_prefix = get_recent_context(limit=6)
@@ -207,26 +210,30 @@ def stream_agy_response(prompt, request_data, prefix_note=None, emotion_tag="[em
         )
 
         for line in process.stdout:
+            # Hide internal MCP, tool calls, and debug telemetry from the user
+            if is_internal_debug_line(line):
+                continue
+
             full_response.append(line)
             yield chunk(line)
 
         process.wait(timeout=120)
 
         if process.returncode != 0:
-            err_msg = f"\n\n[emotion:sorrow] ⚠️ agy exited with code {process.returncode}"
+            err_msg = f"\n\n⚠️ An error occurred during execution (code {process.returncode})."
             full_response.append(err_msg)
             yield chunk(err_msg)
 
     except subprocess.TimeoutExpired:
         if process:
             process.kill()
-        err_msg = "\n\n[emotion:sorrow] ⚠️ Operation timed out after 120 seconds."
+        err_msg = "\n\n⚠️ Operation timed out after 120 seconds."
         full_response.append(err_msg)
         yield chunk(err_msg)
     except FileNotFoundError:
         raise
     except Exception as e:
-        err_msg = f"\n\n[emotion:sorrow] ⚠️ Bridge execution error: {str(e)}"
+        err_msg = f"\n\n⚠️ Bridge error: {str(e)}"
         full_response.append(err_msg)
         yield chunk(err_msg)
 
@@ -238,11 +245,8 @@ def stream_agy_response(prompt, request_data, prefix_note=None, emotion_tag="[em
 # 5. Fast Local GPU Ollama Forwarding (<300ms Latency)
 # ─────────────────────────────────────────────────────────────
 def stream_fast_local_ollama(path, request_data):
-    """Proxies casual banter directly to local RTX 500 Ada Ollama with emotion markup."""
+    """Proxies casual banter directly to local RTX 500 Ada Ollama cleanly with no alerts/tags."""
     try:
-        # Prepend pending notifications if any
-        pending_alerts = fetch_and_mark_undelivered_notifications()
-        
         resp = requests.post(
             f"{OLLAMA_REAL_URL}/{path}",
             json=request_data,
@@ -252,13 +256,6 @@ def stream_fast_local_ollama(path, request_data):
 
         def generate():
             full_text = []
-            if pending_alerts:
-                yield json.dumps({
-                    "model": request_data.get("model", "qwen2.5:0.5b"),
-                    "message": {"role": "assistant", "content": "[emotion:alert] " + "\n".join(pending_alerts) + "\n\n"},
-                    "done": False
-                }) + "\n"
-
             for raw_chunk in resp.iter_lines():
                 if raw_chunk:
                     line = raw_chunk.decode("utf-8")
@@ -286,7 +283,7 @@ def stream_fast_local_ollama(path, request_data):
 # ─────────────────────────────────────────────────────────────
 @app.route("/notify", methods=["POST"])
 def receive_notification():
-    """Webhook for ambient daemons and orca-cli events."""
+    """Webhook for ambient daemons and orca-cli events (logged quietly to DB)."""
     try:
         data = request.get_json(force=True, silent=True) or {}
         message = data.get("message", "System notification received.")
@@ -296,8 +293,8 @@ def receive_notification():
             conn.execute("INSERT INTO system_notifications (source, message, delivered) VALUES (?, ?, 0)", (source, message))
             conn.commit()
             
-        print(f"[bridge:notify] Queued proactive alert from [{source}]: {message}")
-        return json.dumps({"status": "SUCCESS", "message": "Notification queued for delivery"}), 200
+        print(f"[bridge:notify] Recorded alert from [{source}]: {message}")
+        return json.dumps({"status": "SUCCESS", "message": "Notification recorded"}), 200
     except Exception as e:
         return json.dumps({"status": "ERROR", "error": str(e)}), 500
 
@@ -331,11 +328,7 @@ def catch_all(path):
                         f"Inspect this image and provide a direct, concise answer."
                     )
                     return Response(
-                        stream_with_context(stream_agy_response(
-                            vision_prompt, data,
-                            prefix_note=f"👁️ Inspecting window: [{win_title}]",
-                            emotion_tag="[emotion:thinking]"
-                        )),
+                        stream_with_context(stream_agy_response(vision_prompt, data)),
                         mimetype="application/x-ndjson",
                     )
 
@@ -343,23 +336,19 @@ def catch_all(path):
             if user_msg.startswith(("/system ", "/agy ", "!")):
                 cmd = user_msg.split(" ", 1)[1] if " " in user_msg else user_msg[1:]
                 return Response(
-                    stream_with_context(stream_agy_response(
-                        cmd, data,
-                        prefix_note=f"⚙️ Executing system action:\n> {cmd}",
-                        emotion_tag="[emotion:thinking]"
-                    )),
+                    stream_with_context(stream_agy_response(cmd, data)),
                     mimetype="application/x-ndjson",
                 )
 
             # Route C: Hybrid Classifier Dispatch
             if is_action_or_deep_task(user_msg):
-                # Deep Agentic Execution with Context Memory
+                # Deep Agentic Execution with Context Memory (clean output)
                 return Response(
-                    stream_with_context(stream_agy_response(user_msg, data, emotion_tag="[emotion:joy]")),
+                    stream_with_context(stream_agy_response(user_msg, data)),
                     mimetype="application/x-ndjson",
                 )
             else:
-                # Fast Local GPU Ollama Execution (<300ms latency)
+                # Fast Local GPU Ollama Execution (<300ms latency, clean output)
                 return stream_fast_local_ollama(path, data)
 
         except Exception as e:
