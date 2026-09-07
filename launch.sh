@@ -83,6 +83,8 @@ if [ -x "$UNITY_BIN" ]; then
 elif [ -d "$PROJECT_DIR/dist/MateEngineX/Payload" ]; then
     echo "  -> Deploying updated runtime bundle into build directory..."
     cp -r "$PROJECT_DIR/dist/MateEngineX/Payload/." "$PROJECT_DIR/build/"
+    cp -f "$PROJECT_DIR/mate_bridge.py" "$PROJECT_DIR/build/" 2>/dev/null || true
+    cp -rf "$PROJECT_DIR/scripts" "$PROJECT_DIR/build/" 2>/dev/null || true
     if [ -f "$PROJECT_DIR/Plugins/StandaloneFileBrowser/build/libStandaloneFileBrowser.so" ]; then
         mkdir -p "$PROJECT_DIR/build/MateEngineX_Data/Plugins/x86_64"
         cp -f "$PROJECT_DIR/Plugins/StandaloneFileBrowser/build/libStandaloneFileBrowser.so" "$PROJECT_DIR/build/MateEngineX_Data/Plugins/x86_64/" 2>/dev/null || true
