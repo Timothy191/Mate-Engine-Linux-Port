@@ -163,6 +163,15 @@ Assets/MATE\ ENGINE\ -\ Packages/StandaloneFileBrowser/Plugins/Linux/x86_64/
 Assets/MATE\ ENGINE\ -\ Packages/StandaloneFileBrowser/Plugins/Linux
 Assets/MATE\ ENGINE\ -\ Packages/StandaloneFileBrowser/Plugins/Linux/x86_64.meta
 
-Assets/MATE\ ENGINE\ -\ Packages/StandaloneFileBrowser/Plugins/Linux/x86_64.meta
-
 _build
+
+# Runtime logs, Python caches, and SQLite databases
+*.log
+__pycache__/
+*.pyc
+data/*.db
+data/*.sqlite
+scripts/*.log
+dist/
+dist/*.tar.gz
+dist/*.zip
