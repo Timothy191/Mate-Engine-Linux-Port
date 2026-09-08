@@ -172,6 +172,10 @@ __pycache__/
 data/*.db
 data/*.sqlite
 scripts/*.log
+logs/
 dist/
 dist/*.tar.gz
 dist/*.zip
+target/
+**/target/
+*.bak

@@ -17,8 +17,10 @@ Architectural Amendments:
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
+import select
 import time
 import requests
 from flask import Flask, request, Response, stream_with_context
@@ -151,11 +153,17 @@ def capture_desktop_window():
 # ─────────────────────────────────────────────────────────────
 # 3. Hybrid Intent Classifier
 # ─────────────────────────────────────────────────────────────
-ACTION_TRIGGERS = [
-    "/", "system", "terminal", "bash", "shell", "run ", "execute", "install",
-    "check my", "fix ", "debug", "create file", "edit file", "look at",
-    "what is on my screen", "git ", "build", "compile", "clean", "organize",
-    "find file", "search code", "inspect", "vram", "gpu", "monitor", "daemon"
+# Word-boundary patterns for actionable directives. Kept deliberately
+# narrow: casual banter must NOT be hijacked into heavyweight agy runs.
+# Multi-word phrases use substring matching; single words use \b boundaries.
+ACTION_PATTERNS = [
+    r"\bsystem\b", r"\bterminal\b", r"\bbash\b", r"\bshell\b",
+    r"\bexecute\b", r"\binstall\b", r"\bdebug\b",
+    r"check my", r"fix (this|that|it|the|\w+ bug)", r"\bcompile\b",
+    r"create file", r"edit file", r"look at",
+    r"what is on my screen", r"\bgit\b", r"\bbuild\b",
+    r"find file", r"search code", r"\binspect\b",
+    r"\bvram\b", r"\bgpu\b", r"\bdaemon\b",
 ]
 
 def is_action_or_deep_task(user_msg):
@@ -166,7 +174,7 @@ def is_action_or_deep_task(user_msg):
     msg = user_msg.strip().lower()
     if msg.startswith(("/", "!", "$")):
         return True
-    return any(trigger in msg for trigger in ACTION_TRIGGERS)
+    return any(re.search(pattern, msg) for pattern in ACTION_PATTERNS)
 
 # ─────────────────────────────────────────────────────────────
 # 4. Antigravity Deep Agentic Streaming Engine
@@ -185,6 +193,16 @@ def is_internal_debug_line(line):
         return False
     return any(cleaned.startswith(pat) or pat in cleaned for pat in MCP_DEBUG_PATTERNS)
 
+EMOTION_ALIASES = {
+    "happy": "joy", "sad": "sorrow", "angry": "angry", "sorrow": "sorrow",
+    "joy": "joy", "fun": "fun", "relaxed": "fun", "alert": "alert",
+    "thinking": "thinking", "surprised": "alert",
+}
+
+def emotion_tag_line(tag):
+    """Builds the leading [emotion:...] chunk understood by Unity's EmotionDriver."""
+    return f"[emotion:{tag}] "
+
 def stream_agy_response(prompt, request_data):
     model = request_data.get("model", "qwen2.5:0.5b")
     full_response = []
@@ -196,8 +214,13 @@ def stream_agy_response(prompt, request_data):
             "done": done,
         }) + "\n"
 
-    # Assemble contextual prompt curing amnesia
+    # Assemble contextual prompt curing amnesia and surface pending hardware alerts
     context_prefix = get_recent_context(limit=6)
+    pending_alerts = fetch_and_mark_undelivered_notifications()
+    if pending_alerts:
+        alert_block = "--- PENDING SYSTEM ALERTS ---\n" + "\n".join(pending_alerts) + "\n--- END ALERTS ---\n"
+        context_prefix = f"{alert_block}\n{context_prefix}" if context_prefix else alert_block
+
     full_agent_prompt = f"{context_prefix}User Directive:\n{prompt}" if context_prefix else prompt
 
     process = None
@@ -209,7 +232,28 @@ def stream_agy_response(prompt, request_data):
             text=True
         )
 
-        for line in process.stdout:
+        # Deadline-bounded read loop: a silent-hanging agy is killed at the
+        # 120 s mark instead of blocking on EOF forever.
+        deadline = time.monotonic() + 120
+        stdout_fd = process.stdout.fileno()
+        os.set_blocking(stdout_fd, False)
+        timed_out = False
+
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            ready, _, _ = select.select([stdout_fd], [], [], min(remaining, 2.0))
+            if not ready:
+                if process.poll() is not None:
+                    break
+                continue
+            line = process.stdout.readline()
+            if not line:
+                if process.poll() is not None:
+                    break
+                continue
             # Hide internal MCP, tool calls, and debug telemetry from the user
             if is_internal_debug_line(line):
                 continue
@@ -217,22 +261,25 @@ def stream_agy_response(prompt, request_data):
             full_response.append(line)
             yield chunk(line)
 
-        process.wait(timeout=120)
-
-        if process.returncode != 0:
-            err_msg = f"\n\n⚠️ An error occurred during execution (code {process.returncode})."
+        if timed_out:
+            process.kill()
+            process.wait(timeout=5)
+            err_msg = "\n\n⚠️ Operation timed out after 120 seconds."
             full_response.append(err_msg)
             yield chunk(err_msg)
+        else:
+            process.wait(timeout=10)
 
-    except subprocess.TimeoutExpired:
-        if process:
-            process.kill()
-        err_msg = "\n\n⚠️ Operation timed out after 120 seconds."
-        full_response.append(err_msg)
-        yield chunk(err_msg)
+            if process.returncode != 0:
+                err_msg = f"\n\n⚠️ An error occurred during execution (code {process.returncode})."
+                full_response.append(err_msg)
+                yield chunk(err_msg)
+
     except FileNotFoundError:
         raise
     except Exception as e:
+        if process and process.poll() is None:
+            process.kill()
         err_msg = f"\n\n⚠️ Bridge error: {str(e)}"
         full_response.append(err_msg)
         yield chunk(err_msg)
@@ -320,7 +367,7 @@ def catch_all(path):
             if user_msg.startswith(("/see", "/look")) or "look at my screen" in user_msg.lower():
                 clean_query = user_msg.replace("/see", "").replace("/look", "").strip() or "Inspect and explain what you see in this window."
                 img_path, win_title = capture_desktop_window()
-                
+
                 if img_path:
                     vision_prompt = (
                         f"The user asked: '{clean_query}'.\n"

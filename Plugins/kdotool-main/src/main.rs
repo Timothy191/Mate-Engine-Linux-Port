@@ -167,8 +167,8 @@ fn generate_step(
             if WINDOW_ACTIONS.contains_key(command) {
                 let mut arg_window_id: Option<String> = None;
 
-                let action_script;
-                match command {
+                
+                let action_script = match command {
                     "windowstate" => {
                         let mut opt_windowstate = String::new();
 
@@ -218,10 +218,10 @@ fn generate_step(
 
                         let mut render_context = render_context.clone();
                         add_context(&mut render_context, "windowstate", opt_windowstate);
-                        action_script = reg.render_template_with_context(
+                        reg.render_template_with_context(
                             WINDOW_ACTIONS.get(command).unwrap(),
                             &render_context,
-                        )?;
+                        )?
                     }
 
                     "windowmove" | "windowsize" => {
@@ -299,10 +299,10 @@ fn generate_step(
                         add_context(&mut render_context, "y", y);
                         add_context(&mut render_context, "x_percent", x_percent);
                         add_context(&mut render_context, "y_percent", y_percent);
-                        action_script = reg.render_template_with_context(
+                        reg.render_template_with_context(
                             WINDOW_ACTIONS.get(command).unwrap(),
                             &render_context,
-                        )?;
+                        )?
                     }
 
                     "set_desktop_for_window" => {
@@ -349,10 +349,10 @@ fn generate_step(
                         };
                         let mut render_context = render_context.clone();
                         add_context(&mut render_context, "desktop_id", desktop_id);
-                        action_script = reg.render_template_with_context(
+                        reg.render_template_with_context(
                             WINDOW_ACTIONS.get(command).unwrap(),
                             &render_context,
-                        )?;
+                        )?
                     }
 
                     _ => {
@@ -376,10 +376,10 @@ fn generate_step(
                                 }
                             }
                         }
-                        action_script = reg.render_template_with_context(
+                        reg.render_template_with_context(
                             WINDOW_ACTIONS.get(command).unwrap(),
                             &render_context,
-                        )?;
+                        )?
                     }
                 };
 

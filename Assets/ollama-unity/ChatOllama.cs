@@ -77,6 +77,8 @@ public class ChatOllama : MonoBehaviour
 
     private Text aiBubbleText;
     private MarkdownTextAutoConverter markdowner;
+    private EmotionDriver emotionDriver;
+    private string pendingEmotionToken = "";
 
     private ConcurrentQueue<string> tokenQueue = new ConcurrentQueue<string>();
     
@@ -276,8 +278,9 @@ public class ChatOllama : MonoBehaviour
         AddBubble(message, true);
         Bubble aiBubble = AddBubble("...", false);
         aiBubbleText = aiBubble.bubbleObject.gameObject.GetComponent<Text>();
-        
+
         while (tokenQueue.TryDequeue(out _)) {}
+        pendingEmotionToken = "";
         requestFinished = false;
         
         Ollama.OnStreamFinished += () =>
@@ -403,6 +406,9 @@ public class ChatOllama : MonoBehaviour
         {
             while (tokenQueue.TryDequeue(out string token))
             {
+                // Strip emotion tags from display text and drive the avatar's face instead.
+                if (ProcessEmotionTokens(token)) continue;
+
                 markdowner.AppendText(aiBubbleText, token);
                 layoutDirty = true;
 
@@ -411,6 +417,70 @@ public class ChatOllama : MonoBehaviour
                 if (avatarAnimator != null) avatarAnimator.SetBool(isTalkingHash, true);
             }
         }
+    }
+
+    /// <summary>
+    /// Detects [emotion:...] tag tokens streamed by the mate bridge.
+    /// Returns true when the token was consumed as an emotion tag (not chat text).
+    /// Tags may arrive split across chunk boundaries; partial prefixes are held back.
+    /// </summary>
+    bool ProcessEmotionTokens(string token)
+    {
+        if (string.IsNullOrEmpty(token)) return false;
+
+        // A lone tag chunk (whole tag in one token).
+        var match = System.Text.RegularExpressions.Regex.Match(token, @"^\[emotion:([A-Za-z]+)\]\s*$");
+        if (match.Success)
+        {
+            ApplyEmotion(match.Groups[1].Value);
+            return true;
+        }
+
+        // Tag embedded at the start of a content chunk: strip and forward the rest.
+        match = System.Text.RegularExpressions.Regex.Match(token, @"^\[emotion:([A-Za-z]+)\]\s*");
+        if (match.Success)
+        {
+            ApplyEmotion(match.Groups[1].Value);
+            string rest = token.Substring(match.Length);
+            if (rest.Length > 0)
+            {
+                markdowner.AppendText(aiBubbleText, rest);
+                layoutDirty = true;
+            }
+            return true;
+        }
+
+        // An unterminated leading "[emotion:..." means the tag is split across
+        // chunks; hold it back and merge it with the next token.
+        if (token.StartsWith("[emotion:") && !token.Contains("]"))
+        {
+            pendingEmotionToken += token;
+            return true;
+        }
+        if (!string.IsNullOrEmpty(pendingEmotionToken))
+        {
+            string merged = pendingEmotionToken + token;
+            pendingEmotionToken = "";
+            if (ProcessEmotionTokens(merged)) return true;
+            // Merged text turned out to be normal chat text after all.
+            markdowner.AppendText(aiBubbleText, merged);
+            layoutDirty = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    void ApplyEmotion(string tag)
+    {
+        if (emotionDriver == null)
+        {
+            emotionDriver = GetComponent<EmotionDriver>();
+            if (emotionDriver == null) emotionDriver = GetComponentInChildren<EmotionDriver>();
+            if (emotionDriver == null) emotionDriver = FindObjectOfType<EmotionDriver>();
+            if (emotionDriver == null) emotionDriver = gameObject.AddComponent<EmotionDriver>();
+        }
+        if (emotionDriver != null) emotionDriver.SetEmotion(tag);
     }
 
     public void ExitGame()

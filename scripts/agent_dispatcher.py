@@ -22,10 +22,39 @@ import subprocess
 
 AGENTS_BASE_DIR = os.path.expanduser("~/.agents/agents")
 
+
+def _candidate_spec_paths(agent_name):
+    """Yield candidate spec paths in priority order.
+
+    Supports two layouts:
+      - Directory layout: <base>/<name>/agent.md
+      - Flat layout:      <base>/<name>.md
+
+    Bases are tried in order: repo-local .agents first, then user-global.
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    bases = [
+        os.path.join(repo_root, ".agents", "subagents"),
+        os.path.join(repo_root, ".agents", "agents"),
+        AGENTS_BASE_DIR,
+    ]
+    for base in bases:
+        dir_path = os.path.join(base, agent_name, "agent.md")
+        flat_path = os.path.join(base, agent_name + ".md")
+        if os.path.isfile(dir_path):
+            yield dir_path
+        if os.path.isfile(flat_path):
+            yield flat_path
+
 def load_agent_spec(agent_name):
-    agent_path = os.path.join(AGENTS_BASE_DIR, agent_name, "agent.md")
-    if not os.path.exists(agent_path):
-        raise FileNotFoundError(f"Agent specification not found at {agent_path}")
+    agent_path = None
+    for candidate in _candidate_spec_paths(agent_name):
+        if os.path.isfile(candidate):
+            agent_path = candidate
+            break
+
+    if not agent_path:
+        raise FileNotFoundError(f"Agent specification not found for '{agent_name}'. Checked candidate paths.")
     
     with open(agent_path, "r", encoding="utf-8") as f:
         content = f.read()

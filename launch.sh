@@ -21,13 +21,11 @@ echo "======================================================"
 # ----------------------------------------------------
 # 1. Kill any currently running instances
 # ----------------------------------------------------
-echo "[1/4] Checking and terminating running instances..."
+echo "[1/5] Checking and terminating running instances..."
 if pgrep -fi "MateEngineX" > /dev/null 2>&1 || pgrep -x "mateengine" > /dev/null 2>&1; then
     echo "  -> Stopping active MateEngine processes..."
     pkill -f "MateEngineX" 2>/dev/null || true
     pkill -x "mateengine" 2>/dev/null || true
-    pkill -f "mate_bridge.py" 2>/dev/null || true
-    pkill -f "desktop_ambient_daemon.py" 2>/dev/null || true
     sleep 1
     if pgrep -fi "MateEngineX" > /dev/null 2>&1; then
         echo "  -> Force-killing remaining processes..."
@@ -41,7 +39,7 @@ fi
 # ----------------------------------------------------
 # 2. Cleanup caches, temporary files, and old build
 # ----------------------------------------------------
-echo "[2/4] Cleaning caches and removing old build artifacts..."
+echo "[2/5] Cleaning caches and removing old build artifacts..."
 rm -rf "$PROJECT_DIR/Temp" "$PROJECT_DIR/Library/ScriptAssemblies" 2>/dev/null || true
 rm -f "$PROJECT_DIR"/*.log 2>/dev/null || true
 
@@ -55,7 +53,7 @@ echo "  -> Clean build workspace initialized."
 # ----------------------------------------------------
 # 3. Rebuild native plugins & build/update application
 # ----------------------------------------------------
-echo "[3/4] Rebuilding plugins and updating application..."
+echo "[3/5] Rebuilding plugins and updating application..."
 
 # 3a. Rebuild StandaloneFileBrowser native library
 if [ -d "$PROJECT_DIR/Plugins/StandaloneFileBrowser" ]; then
@@ -100,7 +98,7 @@ chmod +x "$BUILD_EXE" 2>/dev/null || true
 # ----------------------------------------------------
 # 4. Environment setup and launch
 # ----------------------------------------------------
-echo "[4/4] Setting environment variables and launching MateEngine..."
+echo "[4/5] Preparing environment variables..."
 
 export GDK_BACKEND=x11
 if [[ "$XDG_SESSION_DESKTOP" == *"Hyprland"* ]] || [[ "$XDG_CURRENT_DESKTOP" == *"Hyprland"* ]]; then
@@ -148,11 +146,51 @@ if [ -n "$visual_id" ]; then
     export SDL_VIDEO_X11_VISUALID="$visual_id"
 fi
 
-echo "  -> Starting Antigravity CLI Proxy Bridge..."
-nohup python3 "$PROJECT_DIR/mate_bridge.py" > "$PROJECT_DIR/bridge.log" 2>&1 &
+# ----------------------------------------------------
+# 4. Start agent stack services under pm2
+# ----------------------------------------------------
+echo "[4/5] Starting agent stack services under pm2..."
 
-echo "  -> Starting Proactive Desktop Ambient Monitor..."
-nohup python3 "$PROJECT_DIR/scripts/desktop_ambient_daemon.py" > "$PROJECT_DIR/scripts/ambient.log" 2>&1 &
+if ! command -v pm2 >/dev/null 2>&1; then
+    echo "  [ERROR] pm2 is required but not found. Install with: npm install -g pm2"
+    exit 1
+fi
+
+# Free port 11434 of stale bridge processes (e.g. leftovers from a nohup launch).
+if command -v ss >/dev/null 2>&1 && ss -tln 2>/dev/null | grep -q ":11434 "; then
+    echo "  -> Port 11434 occupied; freeing it before pm2 start..."
+    fuser -k 11434/tcp 2>/dev/null || pkill -f "mate_bridge.py" 2>/dev/null || true
+    for _ in {1..20}; do
+        if ! ss -tln 2>/dev/null | grep -q ":11434 "; then break; fi
+        sleep 0.5
+    done
+fi
+
+pm2 startOrReload "$PROJECT_DIR/ecosystem.config.js" --update-env
+pm2 save 2>/dev/null || true
+
+# Health check: wait until the bridge answers on :11434.
+for _ in {1..20}; do
+    if curl -s --max-time 2 http://127.0.0.1:11434/ >/dev/null 2>&1; then
+        echo "  -> mate-bridge healthy on :11434."
+        break
+    fi
+    sleep 0.5
+done
+if ! curl -s --max-time 2 http://127.0.0.1:11434/ >/dev/null 2>&1; then
+    echo "  [WARN] mate-bridge did not answer in time; check 'pm2 logs mate-bridge'."
+fi
+pm2 list
+
+# ----------------------------------------------------
+# 5. Environment setup and launch
+# ----------------------------------------------------
+echo "[5/5] Setting environment variables and launching MateEngine..."
+
+if [ ! -x "$BUILD_EXE" ]; then
+    echo "  [ERROR] Build executable missing at $BUILD_EXE"
+    exit 1
+fi
 
 cd "$PROJECT_DIR/build"
 
@@ -163,6 +201,7 @@ else
     echo "  -> Starting in background mode..."
     nohup ./MateEngineX.x86_64 "$@" > "$PROJECT_DIR/mateengine.log" 2>&1 &
     PID=$!
+    disown $PID 2>/dev/null || true
     echo "  -> MateEngine running with PID: $PID"
     echo "  -> Log file: $PROJECT_DIR/mateengine.log"
 fi
