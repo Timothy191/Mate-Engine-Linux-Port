@@ -99,3 +99,4 @@ dist/*.zip
 target/
 **/target/
 *.bak
+.venv/

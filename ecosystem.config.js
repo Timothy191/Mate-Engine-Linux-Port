@@ -1,11 +1,17 @@
 // pm2 process definitions for the MateEngine agent stack.
 // Start / reload with:  pm2 startOrReload ecosystem.config.js
+const fs = require("fs");
+const path = require("path");
+
+const venvPython = path.join(__dirname, ".venv", "bin", "python");
+const pythonInterpreter = fs.existsSync(venvPython) ? venvPython : "python3";
+
 module.exports = {
   apps: [
     {
       name: "mate-bridge",
       script: "mate_bridge.py",
-      interpreter: "python3",
+      interpreter: pythonInterpreter,
       cwd: __dirname,
       max_restarts: 10,
       min_uptime: "10s",

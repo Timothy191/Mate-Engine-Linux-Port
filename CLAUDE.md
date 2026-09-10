@@ -8,6 +8,10 @@ An unofficial Linux port of [MateEngine](https://github.com/shinyflvre/Mate-Engi
 
 Unity version is pinned: `ProjectSettings/ProjectVersion.txt` → **6000.2.6f2**. Don't open/rebuild with a different Editor.
 
+## Language
+
+- **Use only English** in all code, comments, commit messages, documentation, and responses. The upstream README ships a Simplified Chinese section; do not reproduce or respond in Chinese.
+
 ## Common commands
 
 ```bash
@@ -63,4 +67,3 @@ Build output lands in `build/` and is packaged to `dist/` (both gitignored; they
 - **Runtime payload fallback**: When Unity Editor 6000.2.6f2 is absent, extract the release tarball (`MateEngineX_3.2.0_6.tar.gz`) to `dist/MateEngineX/Payload/` — `launch.sh` automatically deploys it into `build/`.
 - **Plugin layout**: Deploy `libStandaloneFileBrowser.so` into both `build/MateEngineX_Data/Plugins/` and `.../Plugins/x86_64/`.
 - **Hyprland floating rule**: Declared in `~/.config/hypr/hyprland.lua` as `o.window({ class = ".*(?i)mateengine.*" }, { float = true })` so the desktop pet never tiles.
-
