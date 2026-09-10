@@ -1,40 +1,53 @@
 """
-mate_bridge.py — Hardened Antigravity ↔ MateEngine Hybrid Multi-Agent Bridge
+mate_bridge.py — High-Performance Async FastAPI ↔ MateEngine Multi-Agent Bridge
 
-Architectural Amendments:
-  1. Hybrid Multi-Tier Intent Routing:
-     - Fast Tier (<300ms): Casual banter/greetings route to local GPU Ollama on 11435.
-     - Deep Tier (Agentic): Actionable directives, /system, /see, and coding route to Antigravity CLI.
-  2. Episodic Context Injection (Anti-Amnesia):
-     - Injects the last 6 conversation turns from SQLite into the Antigravity prompt payload.
-  3. Smart Non-Avatar Hyprland Grounding:
-     - Automatically skips MateEngineX when capturing screen; targets the actual active application.
-  4. Proactive Alert Delivery:
-     - Undelivered system notifications in SQLite are automatically prepended to the speech stream.
-  5. Process Timeouts & Graceful Termination:
-     - Prevents orphaned agy processes using strict execution boundaries.
+Key Enhancements (P2 Architecture):
+  1. ASGI / FastAPI Core:
+     - Fully asynchronous request handling via Starlette/FastAPI and httpx.AsyncClient.
+  2. Async Streaming (ndjson & SSE):
+     - StreamingResponse for sub-300ms time-to-first-token on local Ollama banter.
+     - Async subprocess streaming for Antigravity (agy) agentic actions.
+  3. Strict VRAM Safeguard (RTX 500 Ada):
+     - Automatic injection of num_ctx: 2048 on all forwarded Ollama payloads to protect 4GB VRAM ceiling.
+  4. High-Concurrency SQLite with WAL Mode:
+     - PRAGMA journal_mode=WAL and synchronous=NORMAL to eliminate database contention.
+  5. Smart Non-Avatar Hyprland Grounding:
+     - Intelligently filters out MateEngineX when capturing desktop for /see or /look.
+  6. Proactive Ambient Notifications:
+     - Automatically surfaces unread notifications into agent reasoning context.
 """
 
+import asyncio
 import json
 import os
 import re
 import sqlite3
 import subprocess
-import select
-import time
-import requests
-from flask import Flask, request, Response, stream_with_context
+from typing import AsyncGenerator, Optional, Tuple
 
-app = Flask(__name__)
-OLLAMA_REAL_URL = "http://127.0.0.1:11435"
+import httpx
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse, StreamingResponse
+
+app = FastAPI(title="MateEngine Hardened Agent Bridge", version="2.0.0")
+
+OLLAMA_REAL_URL = os.getenv("OLLAMA_REAL_URL", "http://127.0.0.1:11435")
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "mate_memory.db")
+MAX_CONTEXT_TOKENS = 2048
 
 # ─────────────────────────────────────────────────────────────
 # 1. SQLite Persistent Episodic Memory & Notification Storage
 # ─────────────────────────────────────────────────────────────
-def init_db():
+def get_db_conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    with sqlite3.connect(DB_PATH) as conn:
+    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
+    return conn
+
+def init_db():
+    with get_db_conn() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS conversation_turns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,24 +69,23 @@ def init_db():
 
 init_db()
 
-def log_memory(role, content):
+def log_memory(role: str, content: str):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_conn() as conn:
             conn.execute("INSERT INTO conversation_turns (role, content) VALUES (?, ?)", (role, content))
             conn.commit()
     except Exception as e:
         print(f"[bridge:memory] DB log error: {e}")
 
-def get_recent_context(limit=6):
-    """Fetches recent conversation turns to cure turn-by-turn amnesia."""
+def get_recent_context(limit: int = 6) -> str:
+    """Fetches recent conversation turns to prevent context amnesia."""
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_conn() as conn:
             rows = conn.execute(
                 "SELECT role, content FROM conversation_turns ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
             if not rows:
                 return ""
-            # Invert to chronological order
             ordered = reversed(rows)
             formatted = ["--- RECENT CONVERSATION CONTEXT ---"]
             for role, text in ordered:
@@ -87,11 +99,11 @@ def get_recent_context(limit=6):
         print(f"[bridge:memory] Failed to retrieve context: {e}")
         return ""
 
-def fetch_and_mark_undelivered_notifications():
-    """Retrieves queued notifications to speak them out to the user."""
+def fetch_and_mark_undelivered_notifications() -> list:
+    """Retrieves queued system/daemon notifications to inject into agent stream."""
     alerts = []
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_conn() as conn:
             rows = conn.execute(
                 "SELECT id, source, message FROM system_notifications WHERE delivered = 0 ORDER BY id ASC"
             ).fetchall()
@@ -106,31 +118,27 @@ def fetch_and_mark_undelivered_notifications():
 # ─────────────────────────────────────────────────────────────
 # 2. Smart Hyprland Desktop Grounding (Filtering Out Avatar)
 # ─────────────────────────────────────────────────────────────
-def capture_desktop_window():
+def capture_desktop_window() -> Tuple[Optional[str], Optional[str]]:
     """
-    Intelligently captures the active workspace or target application window,
-    explicitly avoiding self-capture of MateEngineX.
+    Captures the active workspace or target application window,
+    filtering out MateEngineX to avoid self-capture loops.
     """
     capture_path = "/tmp/mate_screen_capture.png"
     target_title = "Desktop Workspace"
 
     try:
-        # Check all clients on Hyprland to find the top active window that is NOT MateEngine
         clients_proc = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True, text=True, timeout=2)
         if clients_proc.returncode == 0 and clients_proc.stdout.strip():
             clients = json.loads(clients_proc.stdout)
-            # Find focused window or top window on active workspace
             valid_windows = [
-                c for c in clients 
-                if "mateengine" not in c.get("class", "").lower() 
+                c for c in clients
+                if "mateengine" not in c.get("class", "").lower()
                 and "mateengine" not in c.get("title", "").lower()
                 and c.get("size", [0, 0])[0] > 100
             ]
-            
-            # Prefer focused window if not MateEngine
+
             focused = next((c for c in valid_windows if c.get("focusHistoryID", 1) == 0), None)
             if not focused and valid_windows:
-                # Fallback to the most recently focused non-avatar window
                 valid_windows.sort(key=lambda c: c.get("focusHistoryID", 999))
                 focused = valid_windows[0]
 
@@ -142,7 +150,6 @@ def capture_desktop_window():
     except Exception as e:
         print(f"[bridge:vision] Smart client detection fallback: {e}")
 
-    # Fallback to full active monitor screenshot
     try:
         subprocess.run(["grim", capture_path], check=True, timeout=5)
         return capture_path, target_title
@@ -153,9 +160,6 @@ def capture_desktop_window():
 # ─────────────────────────────────────────────────────────────
 # 3. Hybrid Intent Classifier
 # ─────────────────────────────────────────────────────────────
-# Word-boundary patterns for actionable directives. Kept deliberately
-# narrow: casual banter must NOT be hijacked into heavyweight agy runs.
-# Multi-word phrases use substring matching; single words use \b boundaries.
 ACTION_PATTERNS = [
     r"\bsystem\b", r"\bterminal\b", r"\bbash\b", r"\bshell\b",
     r"\bexecute\b", r"\binstall\b", r"\bdebug\b",
@@ -166,58 +170,42 @@ ACTION_PATTERNS = [
     r"\bvram\b", r"\bgpu\b", r"\bdaemon\b",
 ]
 
-def is_action_or_deep_task(user_msg):
-    """
-    Classifies whether a message requires deep agentic execution (Antigravity)
-    or is casual conversational banter (Fast Local Ollama).
-    """
+def is_action_or_deep_task(user_msg: str) -> bool:
     msg = user_msg.strip().lower()
     if msg.startswith(("/", "!", "$")):
         return True
     return any(re.search(pattern, msg) for pattern in ACTION_PATTERNS)
 
-# ─────────────────────────────────────────────────────────────
-# 4. Antigravity Deep Agentic Streaming Engine
-# ─────────────────────────────────────────────────────────────
-# Patterns of internal debug/MCP chatter to suppress from user view
 MCP_DEBUG_PATTERNS = (
     "[mcp", "mcp:", "mcp server", "connected to mcp", "loading mcp",
     "call_mcp_tool", "tool_call", "tool_result", "[gin]", "running command",
     "executing tool", "thinking process:", "debug:"
 )
 
-def is_internal_debug_line(line):
-    """Returns True if the line is internal tool/MCP telemetry that should be hidden."""
+def is_internal_debug_line(line: str) -> bool:
     cleaned = line.strip().lower()
     if not cleaned:
         return False
     return any(cleaned.startswith(pat) or pat in cleaned for pat in MCP_DEBUG_PATTERNS)
 
-EMOTION_ALIASES = {
-    "happy": "joy", "sad": "sorrow", "angry": "angry", "sorrow": "sorrow",
-    "joy": "joy", "fun": "fun", "relaxed": "fun", "alert": "alert",
-    "thinking": "thinking", "surprised": "alert",
-}
-
-def emotion_tag_line(tag):
-    """Builds the leading [emotion:...] chunk understood by Unity's EmotionDriver."""
-    return f"[emotion:{tag}] "
-
-def stream_agy_response(prompt, request_data):
+# ─────────────────────────────────────────────────────────────
+# 4. Antigravity Deep Agentic Async Streaming Engine
+# ─────────────────────────────────────────────────────────────
+async def stream_agy_response(prompt: str, request_data: dict) -> AsyncGenerator[bytes, None]:
     model = request_data.get("model", "qwen2.5:0.5b")
     full_response = []
-    # Inject emotion tag
-    emotion = "thinking"
-    yield chunk(emotion_tag_line(emotion), done=False)
 
-    def chunk(content, done=False):
-        return json.dumps({
+    def make_chunk(content: str, done: bool = False) -> bytes:
+        payload = {
             "model": model,
             "message": {"role": "assistant", "content": content},
             "done": done,
-        }) + "\n"
+        }
+        return (json.dumps(payload) + "\n").encode("utf-8")
 
-    # Assemble contextual prompt curing amnesia and surface pending hardware alerts
+    # Send initial thinking emotion tag for Unity's EmotionDriver
+    yield make_chunk("[emotion:thinking] ", done=False)
+
     context_prefix = get_recent_context(limit=6)
     pending_alerts = fetch_and_mark_undelivered_notifications()
     if pending_alerts:
@@ -226,134 +214,125 @@ def stream_agy_response(prompt, request_data):
 
     full_agent_prompt = f"{context_prefix}User Directive:\n{prompt}" if context_prefix else prompt
 
-    process = None
+    proc = None
     try:
-        process = subprocess.Popen(
-            ["agy", "-p", full_agent_prompt],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True
+        proc = await asyncio.create_subprocess_exec(
+            "agy", "-p", full_agent_prompt,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT
         )
 
-        # Deadline-bounded read loop: a silent-hanging agy is killed at the
-        # 120 s mark instead of blocking on EOF forever.
-        deadline = time.monotonic() + 120
-        stdout_fd = process.stdout.fileno()
-        os.set_blocking(stdout_fd, False)
-        timed_out = False
-
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
-                break
-            ready, _, _ = select.select([stdout_fd], [], [], min(remaining, 2.0))
-            if not ready:
-                if process.poll() is not None:
+        try:
+            while True:
+                line_bytes = await asyncio.wait_for(proc.stdout.readline(), timeout=120.0)
+                if not line_bytes:
                     break
-                continue
-            line = process.stdout.readline()
-            if not line:
-                if process.poll() is not None:
-                    break
-                continue
-            # Hide internal MCP, tool calls, and debug telemetry from the user
-            if is_internal_debug_line(line):
-                continue
+                line = line_bytes.decode("utf-8", errors="replace")
+                if is_internal_debug_line(line):
+                    continue
 
-            full_response.append(line)
-            yield chunk(line)
+                full_response.append(line)
+                yield make_chunk(line, done=False)
 
-        if timed_out:
-            process.kill()
-            process.wait(timeout=5)
+            await proc.wait()
+            if proc.returncode != 0:
+                err_msg = f"\n\n⚠️ Agent execution finished with code {proc.returncode}."
+                full_response.append(err_msg)
+                yield make_chunk(err_msg, done=False)
+
+        except asyncio.TimeoutError:
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
             err_msg = "\n\n⚠️ Operation timed out after 120 seconds."
             full_response.append(err_msg)
-            yield chunk(err_msg)
-        else:
-            process.wait(timeout=10)
+            yield make_chunk(err_msg, done=False)
 
-            if process.returncode != 0:
-                err_msg = f"\n\n⚠️ An error occurred during execution (code {process.returncode})."
-                full_response.append(err_msg)
-                yield chunk(err_msg)
-
-    except FileNotFoundError:
-        raise
     except Exception as e:
-        if process and process.poll() is None:
-            process.kill()
+        if proc and proc.returncode is None:
+            proc.kill()
         err_msg = f"\n\n⚠️ Bridge error: {str(e)}"
         full_response.append(err_msg)
-        yield chunk(err_msg)
+        yield make_chunk(err_msg, done=False)
 
-    # Persist assistant turn to SQLite
     log_memory("assistant", "".join(full_response))
-    yield chunk("", done=True)
+    yield make_chunk("", done=True)
 
 # ─────────────────────────────────────────────────────────────
 # 5. Fast Local GPU Ollama Forwarding (<300ms Latency)
 # ─────────────────────────────────────────────────────────────
-def stream_fast_local_ollama(path, request_data):
-    """Proxies casual banter directly to local RTX 500 Ada Ollama cleanly with no alerts/tags."""
-    try:
-        resp = requests.post(
-            f"{OLLAMA_REAL_URL}/{path}",
-            json=request_data,
-            stream=True,
-            timeout=30
-        )
+def enforce_vram_guard(payload: dict) -> dict:
+    """Enforces RTX 500 Ada 4GB VRAM ceiling: num_ctx <= 2048."""
+    options = payload.setdefault("options", {})
+    if "num_ctx" not in options or options["num_ctx"] > MAX_CONTEXT_TOKENS:
+        options["num_ctx"] = MAX_CONTEXT_TOKENS
+    return payload
 
-        def generate():
-            full_text = []
-            for raw_chunk in resp.iter_lines():
-                if raw_chunk:
-                    line = raw_chunk.decode("utf-8")
-                    try:
-                        parsed = json.loads(line)
-                        content = parsed.get("message", {}).get("content", "")
-                        if content:
-                            full_text.append(content)
-                    except Exception:
-                        pass
-                    yield line + "\n"
+async def stream_fast_local_ollama(path: str, request_data: dict) -> StreamingResponse:
+    """Proxies casual banter directly to local RTX 500 Ada Ollama via httpx.AsyncClient."""
+    enforced_data = enforce_vram_guard(request_data)
 
-            if full_text:
-                log_memory("assistant", "".join(full_text))
+    async def async_generator() -> AsyncGenerator[bytes, None]:
+        full_text = []
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                async with client.stream("POST", f"{OLLAMA_REAL_URL}/{path}", json=enforced_data) as response:
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            parsed = json.loads(line)
+                            content = parsed.get("message", {}).get("content", "")
+                            if content:
+                                full_text.append(content)
+                        except Exception:
+                            pass
+                        yield (line + "\n").encode("utf-8")
+        except Exception as e:
+            print(f"[bridge:local] Local Ollama error: {e}")
+            user_msg = request_data.get("messages", [{}])[-1].get("content", "")
+            async for fallback_chunk in stream_agy_response(user_msg, request_data):
+                yield fallback_chunk
+            return
 
-        return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
+        if full_text:
+            log_memory("assistant", "".join(full_text))
 
-    except Exception as e:
-        print(f"[bridge:local] Local Ollama error, falling back to agy: {e}")
-        user_msg = request_data.get("messages", [{}])[-1].get("content", "")
-        return Response(stream_with_context(stream_agy_response(user_msg, request_data)), mimetype="application/x-ndjson")
+    return StreamingResponse(async_generator(), media_type="application/x-ndjson")
 
 # ─────────────────────────────────────────────────────────────
-# 6. HTTP Webhooks & API Routing
+# 6. HTTP Webhooks & Routing
 # ─────────────────────────────────────────────────────────────
-@app.route("/notify", methods=["POST"])
-def receive_notification():
-    """Webhook for ambient daemons and orca-cli events (logged quietly to DB)."""
+@app.post("/notify")
+async def receive_notification(request: Request):
+    """Webhook for ambient daemons and orca-cli events."""
     try:
-        data = request.get_json(force=True, silent=True) or {}
+        data = await request.json()
         message = data.get("message", "System notification received.")
         source = data.get("source", "system-daemon")
-        
-        with sqlite3.connect(DB_PATH) as conn:
+
+        with get_db_conn() as conn:
             conn.execute("INSERT INTO system_notifications (source, message, delivered) VALUES (?, ?, 0)", (source, message))
             conn.commit()
-            
-        print(f"[bridge:notify] Recorded alert from [{source}]: {message}")
-        return json.dumps({"status": "SUCCESS", "message": "Notification recorded"}), 200
-    except Exception as e:
-        return json.dumps({"status": "ERROR", "error": str(e)}), 500
 
-@app.route("/", defaults={"path": ""}, methods=["GET", "POST", "PUT", "DELETE"])
-@app.route("/<path:path>", methods=["GET", "POST", "PUT", "DELETE"])
-def catch_all(path):
+        return JSONResponse({"status": "SUCCESS", "message": "Notification recorded"})
+    except Exception as e:
+        return JSONResponse({"status": "ERROR", "error": str(e)}, status_code=500)
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "service": "mate-bridge-fastapi",
+        "vram_ceiling": f"{MAX_CONTEXT_TOKENS} tokens",
+        "upstream_ollama": OLLAMA_REAL_URL
+    }
+
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"])
+async def proxy_catch_all(request: Request, path: str):
     if request.method == "POST" and path in ("api/chat", "api/generate"):
         try:
-            data = request.get_json(force=True, silent=True) or {}
+            data = await request.json()
             messages = data.get("messages", [])
             prompt = data.get("prompt", "")
 
@@ -377,47 +356,65 @@ def catch_all(path):
                         f"I captured a screenshot of their target application ('{win_title}') at {img_path}.\n"
                         f"Inspect this image and provide a direct, concise answer."
                     )
-                    return Response(
-                        stream_with_context(stream_agy_response(vision_prompt, data)),
-                        mimetype="application/x-ndjson",
+                    return StreamingResponse(
+                        stream_agy_response(vision_prompt, data),
+                        media_type="application/x-ndjson"
                     )
 
             # Route B: Explicit System / Agent Actions
             if user_msg.startswith(("/system ", "/agy ", "!")):
                 cmd = user_msg.split(" ", 1)[1] if " " in user_msg else user_msg[1:]
-                return Response(
-                    stream_with_context(stream_agy_response(cmd, data)),
-                    mimetype="application/x-ndjson",
+                return StreamingResponse(
+                    stream_agy_response(cmd, data),
+                    media_type="application/x-ndjson"
                 )
 
             # Route C: Hybrid Classifier Dispatch
             if is_action_or_deep_task(user_msg):
-                # Deep Agentic Execution with Context Memory (clean output)
-                return Response(
-                    stream_with_context(stream_agy_response(user_msg, data)),
-                    mimetype="application/x-ndjson",
+                return StreamingResponse(
+                    stream_agy_response(user_msg, data),
+                    media_type="application/x-ndjson"
                 )
             else:
-                # Fast Local GPU Ollama Execution (<300ms latency, clean output)
-                return stream_fast_local_ollama(path, data)
+                return await stream_fast_local_ollama(path, data)
 
         except Exception as e:
             print(f"[bridge] Exception: {e}")
 
-    # Standard loopback for non-chat endpoints (tags, embeddings, etc.)
-    resp = requests.request(
-        method=request.method,
-        url=f"{OLLAMA_REAL_URL}/{path}",
-        headers={k: v for k, v in request.headers if k != "Host"},
-        data=request.get_data(),
-        stream=True,
-    )
-    headers = [(n, v) for n, v in resp.raw.headers.items() if n.lower() not in ('transfer-encoding', 'content-encoding')]
-    return Response(
-        stream_with_context(resp.iter_content(chunk_size=1024)),
-        status=resp.status_code,
+    # Standard loopback for non-intercepted calls (tags, embeddings, model info, Anthropic v1 messages)
+    body = await request.body()
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")}
+
+    client = httpx.AsyncClient(timeout=300.0)
+    req = client.build_request(
+        request.method,
+        f"{OLLAMA_REAL_URL}/{path}",
         headers=headers,
+        content=body,
+        params=dict(request.query_params)
+    )
+    upstream = await client.send(req, stream=True)
+
+    async def forward_stream():
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    resp_headers = {
+        k: v for k, v in upstream.headers.items()
+        if k.lower() not in ("content-length", "transfer-encoding", "content-encoding")
+    }
+
+    return StreamingResponse(
+        forward_stream(),
+        status_code=upstream.status_code,
+        headers=resp_headers,
+        media_type=upstream.headers.get("content-type")
     )
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=11434, threaded=True)
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=11434, log_level="warning")
