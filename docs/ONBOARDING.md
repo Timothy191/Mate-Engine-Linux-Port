@@ -29,10 +29,12 @@ environment. The canonical runbook lives in `CLAUDE.md`; this file is the checkl
 ## 1. System Library Prerequisites
 
 ### All distros (X11 + compositing + tray support)
+
 - GTK3, glib2, libayatana-appindicator, libpulse / pipewire-pulse
 - X11 libs: `libx11 libxext libxrender libxdamage libxcursor libxrandr libxcomposite`
 
 ### Install commands
+
 ```bash
 # Debian/Ubuntu
 sudo apt install --noconfirm --needed libpulse0 libgtk-3-0t64 libglib2.0-0t64 \
@@ -49,24 +51,23 @@ sudo pacman -S --noconfirm --needed libpulse gtk3 glib2 libx11 libxext libxrende
 ```
 
 ### GNOME-only
-Install the [AppIndicator and KStatusNotifierItem Support extension](https://extensions.gnome.org/extension/615/appindicator-support/)
 
+Install the [AppIndicator and KStatusNotifierItem Support extension](https://extensions.gnome.org/extension/615/appindicator-support/)
 
 ---
 
 ## 2. Tooling Dependencies
 
-| Tool | Why | Install |
-|---|---|---|
-| **Unity Hub + Editor** `6000.2.6f2` | Builds the desktop-pet player via `CliBuilder.Build`. Pinned version — do not use another. | Unity Hub → install `6000.2.6f2` to `~/Unity/Hub/Editor/6000.2.6f2/Editor/`. Verify `ProjectSettings/ProjectVersion.txt`. |
-| **Python 3.10+** | Runs the Flask/FastAPI bridge, ambient daemon, companion engine, tests, subagent dispatcher. | `python3` (system) + project venv at `.venv/` (`fastapi`, `uvicorn`, `httpx`, `starlette`). |
-| **Node.js + npm** | Required for `pm2` (agent-stack daemon supervisor). | `npm install -g pm2` |
-| **cmake / gcc / make** | Compiles the **StandaloneFileBrowser** native plugin (`.so`, not checked in). | `pacman -S cmake gcc` / `apt install cmake build-essential` |
-| **Rust (cargo)** | Builds `kdotool` (window geometry / input helper, not checked in). | `pacman -S rust` / `apt install cargo` |
-| **Blender 5.2.0 + VRM addon** | Procedural companion-model generator (drones, orbs, mascots). Optional — only for the companion pipeline. | Manual install; the generator invokes headless Blender. |
-| **Ollama** | Local LLM backend for in-app AI chat + fast-tier bridge banter. Must listen on `127.0.0.1:11435`. | `systemctl start ollama` (config `OLLAMA_REAL_URL`). |
-| **Antigravity CLI (`agy`)** | Deep-tier agentic actions + subagent dispatch via `agent_dispatcher.py`. | Provided by the Antigravity agent framework on `$PATH`. |
-| **GGUF chat model** | In-app AI chat. File name is case-sensitive. | Place `llama-3.2-3b-instruct-q4_k_m.gguf` next to the executable. |
+| Tool                                | Why                                                                                               | Install                                                                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **Unity Hub + Editor** `6000.2.6f2` | Builds the desktop-pet player via `CliBuilder.Build`. Pinned version — do not use another.        | Unity Hub → install `6000.2.6f2` to `~/Unity/Hub/Editor/6000.2.6f2/Editor/`. Verify `ProjectSettings/ProjectVersion.txt`. |
+| **Python 3.10+**                    | Runs the Flask/FastAPI bridge, ambient daemon, tests, subagent dispatcher.                        | `python3` (system) + project venv at `.venv/` (`fastapi`, `uvicorn`, `httpx`, `starlette`).                               |
+| **Node.js + npm**                   | Required for `pm2` (agent-stack daemon supervisor).                                               | `npm install -g pm2`                                                                                                      |
+| **cmake / gcc / make**              | Compiles the **StandaloneFileBrowser** native plugin (`.so`, not checked in).                     | `pacman -S cmake gcc` / `apt install cmake build-essential`                                                               |
+| **Rust (cargo)**                    | Builds `kdotool` (window geometry / input helper, not checked in).                                | `pacman -S rust` / `apt install cargo`                                                                                    |
+| **Ollama**                          | Local LLM backend for in-app AI chat + fast-tier bridge banter. Must listen on `127.0.0.1:11435`. | `systemctl start ollama` (config `OLLAMA_REAL_URL`).                                                                      |
+| **Antigravity CLI (`agy`)**         | Deep-tier agentic actions + subagent dispatch via `agent_dispatcher.py`.                          | Provided by the Antigravity agent framework on `$PATH`.                                                                   |
+| **GGUF chat model**                 | In-app AI chat. File name is case-sensitive.                                                      | Place `llama-3.2-3b-instruct-q4_k_m.gguf` next to the executable.                                                         |
 
 > **Non-Arch install:** run `./install.sh` (auto-detects Debian/Fedora). Arch users: `yay -S mateengine`.
 
@@ -100,21 +101,27 @@ cp Plugins/kdotool-main/target/release/kdotool build/
 ## 4. Runtime Build Options
 
 ### Option 1 — Unity Editor GUI (recommended / safest)
+
 Open the project in Unity 6000.2.6f2, build the player, executable name **`MateEngineX.x86_64`**.
 Output → `build/`.
 
 ### Option 2 — CLI build (debug only; may show abnormal behaviour)
+
 ```bash
 ./build.sh /path/to/output        # produces MateEngineX.x86_64
 ```
+
 Requires `${UNITY_PATH:-$HOME/Unity/Hub/Editor/6000.2.6f2/Editor/Unity}`.
 
 ### Option 3 — No Unity Editor installed (runtime bundle only)
+
 Extract the release tarball to the payload location `launch.sh` expects:
+
 ```bash
 mkdir -p dist/MateEngineX/Payload
 tar -xzf dist/MateEngineX_3.2.0_6.tar.gz -C dist/MateEngineX/Payload --strip-components=1
 ```
+
 `launch.sh` auto-deploys `dist/MateEngineX/Payload/.` into `build/` when Unity is absent.
 
 ---
@@ -129,10 +136,10 @@ pm2 save   # persist across logins
 pm2 list   # should show mate-bridge + mate-ambient
 ```
 
-| Daemon | Role | Port | Interpreter |
-|---|---|---|---|
-| **mate-bridge** | FastAPI ↔ MateEngine bridge. Routes Ollama chat, Antigravity (`agy`) agentic actions, `/see`/`/look` vision, notifications. Persists SQLite episodic memory. | `127.0.0.1:11434` | `.venv/bin/python` (fallback `python3`) |
-| **mate-ambient** | 60 s health poll: VRAM via `nvidia-smi` (>3500 MB warning), RAM+swap (`>90%` warning). Pushes `POST /notify` to the bridge. | — | `python3` |
+| Daemon           | Role                                                                                                                                                         | Port              | Interpreter                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | --------------------------------------- |
+| **mate-bridge**  | FastAPI ↔ MateEngine bridge. Routes Ollama chat, Antigravity (`agy`) agentic actions, `/see`/`/look` vision, notifications. Persists SQLite episodic memory. | `127.0.0.1:11434` | `.venv/bin/python` (fallback `python3`) |
+| **mate-ambient** | 60 s health poll: VRAM via `nvidia-smi` (>3500 MB warning), RAM+swap (`>90%` warning). Pushes `POST /notify` to the bridge.                                  | —                 | `python3`                               |
 
 Logs → `logs/mate-bridge.{out,err}.log`, `logs/mate-ambient.{out,err}.log`.
 
@@ -145,75 +152,46 @@ Logs → `logs/mate-bridge.{out,err}.log`, `logs/mate-ambient.{out,err}.log`.
 
 ```bash
 ./launch.sh             # full sequence: kill → clean → rebuild plugins → pm2 → health → launch
-# or the unified control plane:
-./mate start [--foreground]   # starts pm2 daemons + launches the active avatar
-./mate status                 # live hardware + process telemetry
-./mate stop                   # clean shutdown of pet + daemons
 ```
 
-`mate start` reads the active avatar from
-`~/.config/unity3d/Shinymoon/MateEngineX/settings.json` (`selectedModelPath`),
-defaulting to `Avatars/CompanionDrone.vrm`.
+`./scripts/preview_avatar.sh` switches the active avatar, reading/writing
+`~/.config/unity3d/Shinymoon/MateEngineX/settings.json` (`selectedModelPath`).
 
 ---
 
-## 7. Companion Generator Pipeline (procedural VRM avatars)
-
-```bash
-./companion.sh create --preset orb   --color violet --name "AriaCore" --preview
-./companion.sh create --preset mech_pet --color ruby --name "ShadowCat" --preview
-./companion.sh create --preset drone --color emerald --name "VerdantDrone"
-./companion.sh list          # list installed VRM avatars in Avatars/
-./companion.sh watch         # inotify hot-reload on save (<1 s switch)
-./companion.sh presets       # show preset/color catalog
-```
-
-- Requires **Blender 5.2.0** + **VRM_Addon_for_Blender**.
-- Presets: `drone`, `orb`, `mech_pet`.
-- Color themes: `cyan`, `emerald`, `violet`, `amber`, `ruby`, `stealth`.
-- Outputs `.vrm` (17-bone humanoid rig, facial blendshapes) → `Avatars/`.
-- Pipeline spec: `docs/COMPANION_PIPELINE.md`.
-
-The `companion-generator-agent` subagent (`.agents/subagents/`) automates this end-to-end via `agent_dispatcher.py`.
-
----
-
-## 8. Development & Iteration Workflow
+## 7. Development & Iteration Workflow
 
 ```bash
 # Hot-reload a new/changed VRM into the running pet (no Unity rebuild)
-./mate preview Avatars/Companion_Orb_Violet.vrm
+./scripts/preview_avatar.sh Avatars/Zome.vrm
 ./scripts/watch_avatar.sh          # watches Avatars/ for saves
 
 # Recompile patched managed DLLs (EmotionDriver.cs / ChatOllama.cs)
 # REQUIRES a decompiled Assembly-CSharp proj at /tmp/decompiled_assembly
 ./scripts/rebuild_managed.sh
 
-# Test avatar stability & compatibility (13-avatar suite)
-./mate test
-
 # Dispatch an autonomous subagent (9-pillar spec)
 python3 scripts/agent_dispatcher.py avatar-workflow-verifier '{"task_id":"..."}'
 ```
 
 ### Subagents (`.agents/subagents/`)
-Seven specs implementing the fast-turnaround VRM avatar pipeline + the companion generator. Each follows the **9 Core Agent Setup Pillars** (identity/routing, runtime envelope, tool sandbox, scope isolation, phased lifecycle, hard negatives, input/output contracts, error/recovery).
 
-| Subagent | Role |
-|---|---|
-| `avatar-pipeline-planner` | Designs zero-rebuild hot-reload architecture (read-only). |
-| `avatar-asset-fetcher` | Gathers reference assets/meshes (read-only). |
-| `avatar-rigging-researcher` | 17-bone universal VRM humanoid rig analysis. |
-| `avatar-mesh-texture-researcher` | Mesh + PBR/emissive material research. |
-| `avatar-animation-blendshape-researcher` | Idle/anim/blendshape binding research. |
-| `avatar-research-synthesizer` | Assembles findings into a build spec. |
-| `avatar-preview-implementer` | Scoped writes: deploys `.vrm` + mutates `settings.json`. |
-| `avatar-workflow-verifier` | Read-only validation of the running pipeline. |
-| `companion-generator-agent` | Procedural generator — models, rigs, exports, previews. |
+Seven specs implementing the fast-turnaround VRM avatar pipeline. Each follows the **9 Core Agent Setup Pillars** (identity/routing, runtime envelope, tool sandbox, scope isolation, phased lifecycle, hard negatives, input/output contracts, error/recovery).
+
+| Subagent                                 | Role                                                      |
+| ---------------------------------------- | --------------------------------------------------------- |
+| `avatar-pipeline-planner`                | Designs zero-rebuild hot-reload architecture (read-only). |
+| `avatar-asset-fetcher`                   | Gathers reference assets/meshes (read-only).              |
+| `avatar-rigging-researcher`              | 17-bone universal VRM humanoid rig analysis.              |
+| `avatar-mesh-texture-researcher`         | Mesh + PBR/emissive material research.                    |
+| `avatar-animation-blendshape-researcher` | Idle/anim/blendshape binding research.                    |
+| `avatar-research-synthesizer`            | Assembles findings into a build spec.                     |
+| `avatar-preview-implementer`             | Scoped writes: deploys `.vrm` + mutates `settings.json`.  |
+| `avatar-workflow-verifier`               | Read-only validation of the running pipeline.             |
 
 ---
 
-## 9. Key Paths & Constraints (quick reference)
+## 8. Key Paths & Constraints (quick reference)
 
 - **Unity version (pinned):** `ProjectSettings/ProjectVersion.txt` → `6000.2.6f2`.
 - **Unity expected location:** `~/Unity/Hub/Editor/6000.2.6f2/Editor/Unity`.
@@ -225,20 +203,16 @@ Seven specs implementing the fast-turnaround VRM avatar pipeline + the companion
 
 ---
 
-## 10. Onboarding Checklist (todo)
+## 9. Onboarding Checklist (todo)
 
 - [ ] Install system libraries (Section 1).
 - [ ] Install Unity 6000.2.6f2 via Hub (Section 2).
 - [ ] Create `.venv` and install `fastapi uvicorn httpx starlette` (Section 2).
 - [ ] `npm install -g pm2` (Section 2).
 - [ ] Install cmake/gcc + Rust cargo (Section 2).
-- [ ] (Optional) Install Blender 5.2.0 + VRM addon (Section 2).
 - [ ] Start Ollama on `127.0.0.1:11435`; place GGUF chat model next to the build (Section 2).
 - [ ] Build native plugins: `make -C Plugins/StandaloneFileBrowser` + `cargo build --release` in `Plugins/kdotool-main` (Section 3).
 - [ ] Build the player: Unity Editor **or** `./build.sh` **or** prepare `dist/MateEngineX/Payload/` (Section 4).
 - [ ] `pm2 startOrReload ecosystem.config.js` → confirm `mate-bridge` + `mate-ambient` running (Section 5).
-- [ ] `./mate start` → confirm the desktop pet launches; `./mate status` for telemetry (Section 6).
-- [ ] (Optional) `./companion.sh create --preset orb --color violet --name AriaCore --preview` (Section 7).
-- [ ] (Optional) Run `./mate test` and/or `python3 scripts/agent_dispatcher.py avatar-workflow-verifier '{}'` (Section 8).
-
-
+- [ ] `./launch.sh` → confirm the desktop pet launches (Section 6).
+- [ ] (Optional) Run `python3 scripts/agent_dispatcher.py avatar-workflow-verifier '{}'` (Section 7).
