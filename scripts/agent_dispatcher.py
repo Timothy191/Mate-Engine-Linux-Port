@@ -19,6 +19,7 @@ import sys
 import json
 import re
 import subprocess
+import yaml
 
 AGENTS_BASE_DIR = os.path.expanduser("~/.agents/agents")
 
@@ -67,15 +68,12 @@ def load_agent_spec(agent_name):
     frontmatter_raw = parts[1]
     instructions = parts[2].strip()
 
-    # Simple YAML key-value parser for basic frontmatter
-    meta = {}
-    for line in frontmatter_raw.splitlines():
-        line = line.strip()
-        if ":" in line and not line.startswith("#"):
-            k, v = line.split(":", 1)
-            k = k.strip()
-            v = v.strip().strip('"').strip("'")
-            meta[k] = v
+    try:
+        meta = yaml.safe_load(frontmatter_raw)
+        if not isinstance(meta, dict):
+            meta = {}
+    except Exception as e:
+        raise ValueError(f"Failed to parse YAML frontmatter in {agent_path}: {e}")
 
     return meta, instructions, agent_path
 

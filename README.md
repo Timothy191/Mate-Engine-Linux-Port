@@ -32,6 +32,7 @@ yay -S mateengine
 - `libpulse0` and `pipewire-pulse` (if you are using Pipewire as audio server)
 - `libgtk-3-0t64 libglib2.0-0t64 libayatana-appindicator`
 - `libx11-6 libxext6 libxrender1 libxdamage1 libxcursor1 libxrandr2 libxcomposite1`
+- Python dependencies are pinned in `requirements.txt` for the bridge and agent stack.
 
 On Ubuntu and other Debian-based Linux:
 ```bash

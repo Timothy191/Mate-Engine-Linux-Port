@@ -9,6 +9,17 @@ MANAGED_DIR="$PROJECT_DIR/build/MateEngineX_Data/Managed"
 PAYLOAD_MANAGED="$PROJECT_DIR/dist/MateEngineX/Payload/MateEngineX_Data/Managed"
 SRC_DIR="/tmp/decompiled_assembly"
 
+if [ ! -d "$SRC_DIR" ]; then
+    echo "[ERROR] Decompiled Assembly-CSharp project not found at $SRC_DIR" >&2
+    echo "       This script requires a pre-existing decompiled Unity managed-code project." >&2
+    echo "       Setup instructions:" >&2
+    echo "         1. Use a tool like ILSpy or dnSpy to decompile Assembly-CSharp.dll from build/MateEngineX_Data/Managed/" >&2
+    echo "         2. Save the decompiled project to /tmp/decompiled_assembly" >&2
+    echo "         3. Ensure Assembly-CSharp.csproj exists in that directory" >&2
+    echo "         4. Re-run this script" >&2
+    exit 1
+fi
+
 if [ ! -d "$MANAGED_DIR" ]; then
     echo "[ERROR] Managed directory not found at $MANAGED_DIR" >&2
     exit 1

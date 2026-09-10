@@ -32,6 +32,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 app = FastAPI(title="MateEngine Hardened Agent Bridge", version="2.0.0")
 
 OLLAMA_REAL_URL = os.getenv("OLLAMA_REAL_URL", "http://127.0.0.1:11435")
+BRIDGE_HOST = os.getenv("MATE_BRIDGE_HOST", "127.0.0.1")
+BRIDGE_PORT = int(os.getenv("MATE_BRIDGE_PORT", "11434"))
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "mate_memory.db")
 MAX_CONTEXT_TOKENS = 2048
 
@@ -417,4 +419,4 @@ async def proxy_catch_all(request: Request, path: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=11434, log_level="warning")
+    uvicorn.run(app, host=BRIDGE_HOST, port=BRIDGE_PORT, log_level="warning")

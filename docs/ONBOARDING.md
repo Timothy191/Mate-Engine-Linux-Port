@@ -61,7 +61,7 @@ Install the [AppIndicator and KStatusNotifierItem Support extension](https://ext
 | Tool                                | Why                                                                                               | Install                                                                                                                   |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | **Unity Hub + Editor** `6000.2.6f2` | Builds the desktop-pet player via `CliBuilder.Build`. Pinned version — do not use another.        | Unity Hub → install `6000.2.6f2` to `~/Unity/Hub/Editor/6000.2.6f2/Editor/`. Verify `ProjectSettings/ProjectVersion.txt`. |
-| **Python 3.10+**                    | Runs the Flask/FastAPI bridge, ambient daemon, tests, subagent dispatcher.                        | `python3` (system) + project venv at `.venv/` (`fastapi`, `uvicorn`, `httpx`, `starlette`).                               |
+| **Python 3.10+**                    | Runs the Flask/FastAPI bridge, ambient daemon, tests, subagent dispatcher.                        | `python3` (system) + project venv at `.venv/`; install pinned packages with `python -m pip install -r requirements.txt`.  |
 | **Node.js + npm**                   | Required for `pm2` (agent-stack daemon supervisor).                                               | `npm install -g pm2`                                                                                                      |
 | **cmake / gcc / make**              | Compiles the **StandaloneFileBrowser** native plugin (`.so`, not checked in).                     | `pacman -S cmake gcc` / `apt install cmake build-essential`                                                               |
 | **Rust (cargo)**                    | Builds `kdotool` (window geometry / input helper, not checked in).                                | `pacman -S rust` / `apt install cargo`                                                                                    |
@@ -139,7 +139,7 @@ pm2 list   # should show mate-bridge + mate-ambient
 | Daemon           | Role                                                                                                                                                         | Port              | Interpreter                             |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | --------------------------------------- |
 | **mate-bridge**  | FastAPI ↔ MateEngine bridge. Routes Ollama chat, Antigravity (`agy`) agentic actions, `/see`/`/look` vision, notifications. Persists SQLite episodic memory. | `127.0.0.1:11434` | `.venv/bin/python` (fallback `python3`) |
-| **mate-ambient** | 60 s health poll: VRAM via `nvidia-smi` (>3500 MB warning), RAM+swap (`>90%` warning). Pushes `POST /notify` to the bridge.                                  | —                 | `python3`                               |
+| **mate-ambient** | 60 s health poll: VRAM via `nvidia-smi` (>3500 MB warning), RAM+swap (`>90%` warning). Uses async `httpx` (not `requests`) to push `POST /notify` to the bridge. | —                 | `python3`                               |
 
 Logs → `logs/mate-bridge.{out,err}.log`, `logs/mate-ambient.{out,err}.log`.
 
@@ -174,6 +174,9 @@ Logs → `logs/mate-bridge.{out,err}.log`, `logs/mate-ambient.{out,err}.log`.
 python3 scripts/agent_dispatcher.py avatar-workflow-verifier '{"task_id":"..."}'
 ```
 
+Run `python3 scripts/smoke_test.py` against a live bridge to exercise `/health`,
+SQLite initialization, `/notify`, and streaming `/api/chat` routing.
+
 ### Subagents (`.agents/subagents/`)
 
 Seven specs implementing the fast-turnaround VRM avatar pipeline. Each follows the **9 Core Agent Setup Pillars** (identity/routing, runtime envelope, tool sandbox, scope isolation, phased lifecycle, hard negatives, input/output contracts, error/recovery).
@@ -195,7 +198,7 @@ Seven specs implementing the fast-turnaround VRM avatar pipeline. Each follows t
 
 - **Unity version (pinned):** `ProjectSettings/ProjectVersion.txt` → `6000.2.6f2`.
 - **Unity expected location:** `~/Unity/Hub/Editor/6000.2.6f2/Editor/Unity`.
-- **Bridge endpoint:** `http://127.0.0.1:11434` (Ollama upstream: `127.0.0.1:11435`).
+- **Bridge endpoint:** `http://127.0.0.1:11434` (override with `MATE_BRIDGE_HOST` and `MATE_BRIDGE_PORT`; defaults remain `127.0.0.1:11434`; Ollama upstream: `127.0.0.1:11435`).
 - **AI chat GGUF:** `llama-3.2-3b-instruct-q4_k_m.gguf` beside the executable.
 - **Ephemeral/runtime (gitignored):** `build/`, `dist/`, `logs/`, `data/mate_memory.db`, `.venv/`, `Library/`, `Temp/`, `target/`.
 - **Do NOT "clean":** `AssetBundles/`, `Avatars/*.vrm`, `ExportedMods/`, `Thry/` are runtime/user content shipped with the repo.

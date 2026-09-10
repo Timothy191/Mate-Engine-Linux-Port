@@ -12,6 +12,7 @@
 set -eo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
+BRIDGE_PORT="${MATE_BRIDGE_PORT:-11434}"
 cd "$PROJECT_DIR"
 
 echo "======================================================"
@@ -81,6 +82,22 @@ if [ -x "$UNITY_BIN" ]; then
     echo "  -> Unity build completed successfully."
 elif [ -d "$PROJECT_DIR/dist/MateEngineX/Payload" ]; then
     echo "  -> Deploying updated runtime bundle into build directory..."
+
+    TARBALL="$PROJECT_DIR/dist/MateEngineX_3.2.0_6.tar.gz"
+    SHA256_FILE="${TARBALL}.sha256"
+    if [ -f "$TARBALL" ] && [ -f "$SHA256_FILE" ]; then
+        echo "  -> Verifying tarball checksum ..."
+        EXPECTED=$(awk '{print $1}' "$SHA256_FILE")
+        ACTUAL=$(sha256sum "$TARBALL" | awk '{print $1}')
+        if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "  [ERROR] Tarball checksum mismatch! Expected $EXPECTED, got $ACTUAL." >&2
+            exit 1
+        fi
+        echo "  -> Tarball checksum verified."
+    elif [ -f "$TARBALL" ] && [ ! -f "$SHA256_FILE" ]; then
+        echo "  [WARN] Tarball present but no .sha256 sidecar found; skipping integrity check."
+    fi
+
     cp -r "$PROJECT_DIR/dist/MateEngineX/Payload/." "$PROJECT_DIR/build/"
     cp -f "$PROJECT_DIR/mate_bridge.py" "$PROJECT_DIR/build/" 2>/dev/null || true
     cp -rf "$PROJECT_DIR/scripts" "$PROJECT_DIR/build/" 2>/dev/null || true
@@ -161,12 +178,12 @@ if ! command -v pm2 >/dev/null 2>&1; then
     exit 1
 fi
 
-# Free port 11434 of stale bridge processes (e.g. leftovers from a nohup launch).
-if command -v ss >/dev/null 2>&1 && ss -tln 2>/dev/null | grep -q ":11434 "; then
-    echo "  -> Port 11434 occupied; freeing it before pm2 start..."
-    fuser -k 11434/tcp 2>/dev/null || pkill -f "mate_bridge.py" 2>/dev/null || true
+# Free port of stale bridge processes (e.g. leftovers from a nohup launch).
+if command -v ss >/dev/null 2>&1 && ss -tln 2>/dev/null | grep -q ":$BRIDGE_PORT "; then
+    echo "  -> Port $BRIDGE_PORT occupied; freeing it before pm2 start..."
+    fuser -k "$BRIDGE_PORT"/tcp 2>/dev/null || pkill -f "mate_bridge.py" 2>/dev/null || true
     for _ in {1..20}; do
-        if ! ss -tln 2>/dev/null | grep -q ":11434 "; then break; fi
+        if ! ss -tln 2>/dev/null | grep -q ":$BRIDGE_PORT "; then break; fi
         sleep 0.5
     done
 fi
@@ -174,15 +191,15 @@ fi
 pm2 startOrReload "$PROJECT_DIR/ecosystem.config.js" --update-env
 pm2 save 2>/dev/null || true
 
-# Health check: wait until the bridge answers on :11434.
+# Health check: wait until the bridge answers on the configured port.
 for _ in {1..20}; do
-    if curl -s --max-time 2 http://127.0.0.1:11434/ >/dev/null 2>&1; then
-        echo "  -> mate-bridge healthy on :11434."
+    if curl -s --max-time 2 "http://127.0.0.1:$BRIDGE_PORT/" >/dev/null 2>&1; then
+        echo "  -> mate-bridge healthy on :$BRIDGE_PORT."
         break
     fi
     sleep 0.5
 done
-if ! curl -s --max-time 2 http://127.0.0.1:11434/ >/dev/null 2>&1; then
+if ! curl -s --max-time 2 "http://127.0.0.1:$BRIDGE_PORT/" >/dev/null 2>&1; then
     echo "  [WARN] mate-bridge did not answer in time; check 'pm2 logs mate-bridge'."
 fi
 pm2 list

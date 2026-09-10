@@ -100,3 +100,7 @@ target/
 **/target/
 *.bak
 .venv/
+
+# Agent tooling (not project content)
+.agent-orchestration/
+.kilo/
