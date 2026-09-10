@@ -1,6 +1,7 @@
 import re
 
-SCENE_PATH = '/home/timothy/orca/Mate-Engine-Linux-Port/Assets/MATE ENGINE - Scenes/Mate Engine Main.unity'
+from pathlib import Path
+SCENE_PATH = str(Path(__file__).resolve().parent.parent / 'Assets/MATE ENGINE - Scenes/Mate Engine Main.unity')
 
 with open(SCENE_PATH, 'r') as f:
     lines = f.readlines()

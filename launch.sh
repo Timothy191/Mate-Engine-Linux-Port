@@ -11,7 +11,7 @@
 
 set -eo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
 cd "$PROJECT_DIR"
 
 echo "======================================================"
@@ -48,6 +48,7 @@ if [ -d "$PROJECT_DIR/build" ]; then
     rm -rf "$PROJECT_DIR/build"
 fi
 mkdir -p "$PROJECT_DIR/build"
+    mkdir -p "$PROJECT_DIR/logs"
 echo "  -> Clean build workspace initialized."
 
 # ----------------------------------------------------
@@ -85,7 +86,11 @@ elif [ -d "$PROJECT_DIR/dist/MateEngineX/Payload" ]; then
     cp -rf "$PROJECT_DIR/scripts" "$PROJECT_DIR/build/" 2>/dev/null || true
     if [ -f "$PROJECT_DIR/Plugins/StandaloneFileBrowser/build/libStandaloneFileBrowser.so" ]; then
         mkdir -p "$PROJECT_DIR/build/MateEngineX_Data/Plugins/x86_64"
+        cp -f "$PROJECT_DIR/Plugins/StandaloneFileBrowser/build/libStandaloneFileBrowser.so" "$PROJECT_DIR/build/MateEngineX_Data/Plugins/" 2>/dev/null || true
         cp -f "$PROJECT_DIR/Plugins/StandaloneFileBrowser/build/libStandaloneFileBrowser.so" "$PROJECT_DIR/build/MateEngineX_Data/Plugins/x86_64/" 2>/dev/null || true
+    fi
+    if [ -f "$PROJECT_DIR/Plugins/kdotool-main/target/release/kdotool" ]; then
+        cp -f "$PROJECT_DIR/Plugins/kdotool-main/target/release/kdotool" "$PROJECT_DIR/build/" 2>/dev/null || true
     fi
     echo "  -> Application bundle prepared at $PROJECT_DIR/build."
 else

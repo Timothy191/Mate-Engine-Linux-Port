@@ -69,7 +69,12 @@ echo "  -> settings.json updated (selectedModelPath set)."
 if [ ! -f "$BUILD_EXE" ]; then
     echo "  -> Initializing build directory from precompiled payload..."
     mkdir -p "$PROJECT_DIR/build"
-    cp -r "$PROJECT_DIR/dist/MateEngineX/Payload/." "$PROJECT_DIR/build/"
+    if [ -d "$PROJECT_DIR/dist/MateEngineX/Payload" ]; then
+        cp -r "$PROJECT_DIR/dist/MateEngineX/Payload/." "$PROJECT_DIR/build/"
+    else
+        echo "  -> [ERROR] Payload missing. Please run build.sh first."
+        exit 1
+    fi
     chmod +x "$BUILD_EXE"
 fi
 

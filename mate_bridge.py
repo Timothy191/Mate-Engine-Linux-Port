@@ -206,6 +206,9 @@ def emotion_tag_line(tag):
 def stream_agy_response(prompt, request_data):
     model = request_data.get("model", "qwen2.5:0.5b")
     full_response = []
+    # Inject emotion tag
+    emotion = "thinking"
+    yield chunk(emotion_tag_line(emotion), done=False)
 
     def chunk(content, done=False):
         return json.dumps({
@@ -409,7 +412,7 @@ def catch_all(path):
         data=request.get_data(),
         stream=True,
     )
-    headers = [(n, v) for n, v in resp.raw.headers.items()]
+    headers = [(n, v) for n, v in resp.raw.headers.items() if n.lower() not in ('transfer-encoding', 'content-encoding')]
     return Response(
         stream_with_context(resp.iter_content(chunk_size=1024)),
         status=resp.status_code,

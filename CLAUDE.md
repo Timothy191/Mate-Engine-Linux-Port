@@ -60,3 +60,7 @@ Build output lands in `build/` and is packaged to `dist/` (both gitignored; they
 - `rebuild_managed.sh` needs a decompiled `Assembly-CSharp` dotnet project already present at `/tmp/decompiled_assembly` (out-of-band setup) — it patches `EmotionDriver.cs`/`ChatOllama.cs`, builds with `dotnet`, and deploys the DLL into `build/` and `dist/` payloads.
 - XWayland limitations: window snapping and dock-sitting don't work. Mods do not load correctly yet.
 - `AssetBundles/`, `Avatars/*.vrm`, `ExportedMods/`, and `Thry/` are runtime/user content shipped with the repo, not build artifacts — don't "clean" them.
+- **Runtime payload fallback**: When Unity Editor 6000.2.6f2 is absent, extract the release tarball (`MateEngineX_3.2.0_6.tar.gz`) to `dist/MateEngineX/Payload/` — `launch.sh` automatically deploys it into `build/`.
+- **Plugin layout**: Deploy `libStandaloneFileBrowser.so` into both `build/MateEngineX_Data/Plugins/` and `.../Plugins/x86_64/`.
+- **Hyprland floating rule**: Declared in `~/.config/hypr/hyprland.lua` as `o.window({ class = ".*(?i)mateengine.*" }, { float = true })` so the desktop pet never tiles.
+

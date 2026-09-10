@@ -6,9 +6,9 @@ fi
 
 file_path="$1"
 
-if [ ! -f "$file_path" ]; then
+if [ -d "$file_path" ]; then
     echo "Warning: '$file_path' is a directory. Adding '/MateEngineX.x86_64' suffix."
     file_path="$1/MateEngineX.x86_64"
 fi
 
-~/Unity/Hub/Editor/6000.2.6f2/Editor/Unity -batchmode -quit -nographics -projectPath $(dirname "$(realpath "${BASH_SOURCE[0]}")") -executeMethod CliBuilder.Build --output $file_path
+"${UNITY_PATH:-$HOME/Unity/Hub/Editor/6000.2.6f2/Editor/Unity}" -batchmode -quit -nographics -buildTarget StandaloneLinux64 -projectPath $(dirname "$(realpath "${BASH_SOURCE[0]}")") -executeMethod CliBuilder.Build --output $file_path
